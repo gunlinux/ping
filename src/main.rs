@@ -3,6 +3,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use std::mem::{MaybeUninit, transmute};
 use std::net::SocketAddr;
 use std::process;
+use std::time::{Duration, Instant};
 
 const ICMP_ECHO_REQUEST: i8 = 8;
 const ICMP_CODE: i8 = 0;
@@ -92,7 +93,6 @@ fn create_packet(id: u16, _seq: i16) -> Vec<u8> {
 
 fn main() {
     // TODO
-    // time of ping
     // validate returned package
     // повередение если пинг / резолв не сработал
     // cli интерфейф
@@ -104,6 +104,7 @@ fn main() {
     let data: Vec<u8> = create_packet(pid, 1);
     println!("{:#?}", data);
 
+    let now = Instant::now();
     socket.connect(&address.into()).unwrap();
     socket.send(&data).unwrap();
     let mut buffer = [0u8; 512];
@@ -112,6 +113,8 @@ fn main() {
         socket.recv(buf)
     }
     .unwrap();
+
+    println!("d is {:?}", now.elapsed());
 
     for i in &buffer[..len] {
         println!("{:#?}", i);
