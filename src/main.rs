@@ -3,7 +3,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use std::mem::{MaybeUninit, transmute};
 use std::net::SocketAddr;
 use std::process;
-use std::time::{Duration, Instant};
+use std::time::{Instant};
 
 const ICMP_ECHO_REQUEST: i8 = 8;
 const ICMP_CODE: i8 = 0;
@@ -93,11 +93,10 @@ fn create_packet(id: u16, _seq: i16) -> Vec<u8> {
 
 fn main() {
     // TODO
-    // повередение если пинг / резолв не сработал
     // cli интерфейф
     let pid: u16 = process::id() as u16;
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)).unwrap();
-    let address: SocketAddr = "1.1.1.1:666".parse().unwrap();
+    let address: SocketAddr = "gunlinu.ru:666".parse().expect("cant resolve host");
     println!("{}", address);
 
     let data: Vec<u8> = create_packet(pid, 1);
