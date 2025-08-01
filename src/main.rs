@@ -1,8 +1,8 @@
 use bincode::{Decode, Encode, config};
-use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::mem::{MaybeUninit, transmute};
 use std::net::SocketAddr;
+use std::process;
 
 const ICMP_ECHO_REQUEST: i8 = 8;
 const ICMP_CODE: i8 = 0;
@@ -20,8 +20,6 @@ struct MyPacket {
 struct DataPacket {
     data: f64,
 }
-
-
 
 fn checksum(source: &[u8]) -> u16 {
     let mut sum: u32 = 0;
@@ -86,19 +84,18 @@ fn create_packet(id: u16, _seq: i16) -> Vec<u8> {
 }
 
 fn main() {
-    // TODO  
-    // 1. real pid
-    // 2. real time stamp data
-    // 3. time of ping
-    // 4. validate returned package
-    // 5. повередение если пинг / резолв не сработал
-    // 6. cli интерфейф
-    // 
+    // TODO
+    // real time stamp data
+    // time of ping
+    // validate returned package
+    // повередение если пинг / резолв не сработал
+    // cli интерфейф
+    let pid: u16 = process::id() as u16;
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)).unwrap();
     let address: SocketAddr = "1.1.1.1:666".parse().unwrap();
     println!("{}", address);
 
-    let data: Vec<u8> = create_packet(41810, 1);
+    let data: Vec<u8> = create_packet(pid, 1);
     println!("{:#?}", data);
 
     socket.connect(&address.into()).unwrap();
