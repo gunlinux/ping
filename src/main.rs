@@ -21,6 +21,13 @@ struct DataPacket {
     data: f64,
 }
 
+fn get_timestamp() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
 fn checksum(source: &[u8]) -> u16 {
     let mut sum: u32 = 0;
     let mut count = 0;
@@ -51,7 +58,7 @@ fn create_packet(id: u16, _seq: i16) -> Vec<u8> {
         _seq: _seq,
     };
     let data = DataPacket {
-        data: 1753889368.069909,
+        data: get_timestamp(),
     };
 
     let cfg = config::standard().with_fixed_int_encoding();
@@ -85,7 +92,6 @@ fn create_packet(id: u16, _seq: i16) -> Vec<u8> {
 
 fn main() {
     // TODO
-    // real time stamp data
     // time of ping
     // validate returned package
     // повередение если пинг / резолв не сработал
