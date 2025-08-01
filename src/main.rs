@@ -93,7 +93,6 @@ fn create_packet(id: u16, _seq: i16) -> Vec<u8> {
 
 fn main() {
     // TODO
-    // validate returned package
     // повередение если пинг / резолв не сработал
     // cli интерфейф
     let pid: u16 = process::id() as u16;
@@ -114,9 +113,9 @@ fn main() {
     }
     .unwrap();
 
-    println!("d is {:?}", now.elapsed());
-
     for i in &buffer[..len] {
         println!("{:#?}", i);
     }
+    assert_eq!(&buffer[8..len], &data[8..len], "data failed");
+    println!("{len} bytes from 1.1.1.1 icmp_seq=1 time={:?}", now.elapsed());
 }
