@@ -230,25 +230,8 @@ fn main() {
         16 * args.pc as u64
     );
     let mut ping_results: Vec<PingResult> = vec![];
-    if args.count == 0 {
-        let mut c = 1;
-        loop {
-            let now = Instant::now();
-            let ping_result = ping(address, pid, c, args.pc);
-            let ping_result: PingResult = match ping_result {
-                Some(_) => ping_result.unwrap(),
-                None => PingResult {
-                    transmitted: 0,
-                    received: 0,
-                    ping_delay: now.elapsed().as_millis(),
-                },
-            };
-            ping_results.push(ping_result);
-            thread::sleep(Duration::from_secs(ping_interval));
-            c += 1;
-        }
-    }
-    for c in 0..args.count {
+    let mut c = 1;
+    while args.count == 0 || c <= args.count {
         let now = Instant::now();
         let ping_result = ping(address, pid, c, args.pc);
         let ping_result: PingResult = match ping_result {
@@ -261,6 +244,7 @@ fn main() {
         };
         ping_results.push(ping_result);
         thread::sleep(Duration::from_secs(ping_interval));
+        c += 1;
     }
     print_stat(ping_results, app_now, &args.host);
 }
