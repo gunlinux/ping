@@ -1,9 +1,20 @@
 use bincode::{Decode, Encode, config};
+use clap::Parser;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::mem::{MaybeUninit, transmute};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::process;
-use std::time::{Instant};
+use std::time::Instant;
+
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Name of the person to greet
+    host: String,
+    //#[arg(short, long, default_val= 1)]
+    //count: u8,
+}
 
 const ICMP_ECHO_REQUEST: i8 = 8;
 const ICMP_CODE: i8 = 0;
@@ -47,16 +58,16 @@ fn checksum(source: &[u8]) -> u16 {
     sum = (sum >> 16) + (sum & 0xffff);
     sum += sum >> 16;
 
-    !(sum as u16)
+    u16::try_from(sum).unwrap()
 }
 
-fn create_packet(id: u16, _seq: i16) -> Vec<u8> {
+fn create_packet(id: u16, seq: i16) -> Vec<u8> {
     let mut header = MyPacket {
         _type: ICMP_ECHO_REQUEST,
         code: ICMP_CODE,
         checksum: 0,
         id: id,
-        _seq: _seq,
+        _seq: seq,
     };
     let data = DataPacket {
         data: get_timestamp(),
@@ -73,35 +84,41 @@ fn create_packet(id: u16, _seq: i16) -> Vec<u8> {
 
     let chksum = checksum(&combined_buf);
     header.checksum = chksum.to_be();
-    println!("{}", chksum);
 
     let header_buf: Vec<u8> = bincode::encode_to_vec(&header, cfg).unwrap();
     let mut new_combined_buf = Vec::with_capacity(header_buf.len() + data_buf.len());
-    println!(
-        "cbughex: {}",
-        combined_buf
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-
     new_combined_buf.extend_from_slice(&header_buf);
     new_combined_buf.extend_from_slice(&data_buf);
-    return new_combined_buf;
+    new_combined_buf
+}
+
+fn resolve_host(host: &str) -> std::io::Result<IpAddr> {
+    use std::net::ToSocketAddrs;
+
+    let socket = format!("{host}:0");
+    let mut addrs = socket.to_socket_addrs()?;
+    addrs
+        .next()
+        .map(|addr| addr.ip())
+        .ok_or_else(|| std::io::Error::other("no IPs resolved"))
 }
 
 fn main() {
-    // TODO
-    // cli интерфейф
+    // TODO Cli package Simple
+    // cli package count
+    let args = Args::parse();
+    let ip: Option<IpAddr> = args.host.parse().ok();
+    let ip: IpAddr = match ip {
+        Some(..) => ip.unwrap(),
+        None => resolve_host(&args.host).unwrap(),
+    };
+
     let pid: u16 = process::id() as u16;
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)).unwrap();
-    let address: SocketAddr = "gunlinu.ru:666".parse().expect("cant resolve host");
-    println!("{}", address);
+    let address: SocketAddr = SocketAddr::new(ip, 8080);
+    println!("got {address}");
 
     let data: Vec<u8> = create_packet(pid, 1);
-    println!("{:#?}", data);
-
     let now = Instant::now();
     socket.connect(&address.into()).unwrap();
     socket.send(&data).unwrap();
@@ -112,9 +129,9 @@ fn main() {
     }
     .unwrap();
 
-    for i in &buffer[..len] {
-        println!("{:#?}", i);
-    }
     assert_eq!(&buffer[8..len], &data[8..len], "data failed");
-    println!("{len} bytes from 1.1.1.1 icmp_seq=1 time={:?}", now.elapsed());
+    println!(
+        "{len} bytes from 1.1.1.1 icmp_seq=1 time={:?}",
+        now.elapsed()
+    );
 }
