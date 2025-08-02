@@ -6,6 +6,10 @@ use std::mem::{MaybeUninit, transmute};
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 use std::{process, thread};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 fn package_count(s: &str) -> Result<u16, String> {
     number_range(s, 1, 4096)
@@ -38,7 +42,7 @@ struct MyPacket {
     _seq: i16,     // h
 } // 8
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PingResult {
     transmitted: u16,
     received: u16,
@@ -127,7 +131,7 @@ fn get_ips(host: String) -> SocketAddr {
     let ip: Option<IpAddr> = host.parse().ok();
     let ip: IpAddr = match ip {
         Some(..) => ip.unwrap(),
-        None => resolve_host(&host).unwrap(),
+        None => resolve_host(&host).expect("ping: {host}: Name or service not known"),
     };
     let address: SocketAddr = SocketAddr::new(ip, 8080);
     return address;
@@ -187,7 +191,10 @@ fn print_stat(ping_results: Vec<PingResult>, app_now: Instant, host: &str) {
         ping_delay: 0,
     };
     let pcount = ping_results.len() as u64;
-
+    if ping_results.len() == 0 {
+        println!("zero info");
+        return
+    }
     let mut min: u128 = ping_results[0].ping_delay;
     for i in &ping_results {
         final_result.transmitted += i.transmitted;
@@ -229,8 +236,25 @@ fn main() {
         address.ip(),
         16 * args.pc as u64
     );
-    let mut ping_results: Vec<PingResult> = vec![];
+    // let mut ping_results: Vec<PingResult> = vec![];
+    let ping_results = Arc::new(Mutex::new(Vec::new()));
     let mut c = 1;
+
+    let host = args.host.clone();
+    let running = Arc::new(AtomicBool::new(true));
+    // Setup Ctrl+C handler
+    {
+        let running = Arc::clone(&running);
+        let ping_results = Arc::clone(&ping_results);
+        ctrlc::set_handler(move || {
+            println!("\nreceived Ctrl+C!");
+            running.store(false, Ordering::SeqCst);
+            //let results = print_stat(ping_results, app_now, host).lock().unwrap();
+            print_stat(ping_results.lock().unwrap().to_vec(), app_now, &host);
+            process::exit(0);
+        })
+        .expect("Error setting Ctrl-C handler");
+    }
     while args.count == 0 || c <= args.count {
         let now = Instant::now();
         let ping_result = ping(address, pid, c, args.pc);
@@ -242,9 +266,9 @@ fn main() {
                 ping_delay: now.elapsed().as_millis(),
             },
         };
-        ping_results.push(ping_result);
+        ping_results.lock().expect("dame").push(ping_result);
         thread::sleep(Duration::from_secs(ping_interval));
         c += 1;
     }
-    print_stat(ping_results, app_now, &args.host);
+    print_stat(ping_results.lock().unwrap().to_vec(), app_now, &args.host.clone());
 }
