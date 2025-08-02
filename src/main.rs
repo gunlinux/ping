@@ -3,8 +3,8 @@ use clap::Parser;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::mem::{MaybeUninit, transmute};
 use std::net::{IpAddr, SocketAddr};
-use std::process;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use std::{process, thread};
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -12,8 +12,10 @@ use std::time::Instant;
 struct Args {
     /// Name of the person to greet
     host: String,
-    //#[arg(short, long, default_val= 1)]
-    //count: u8,
+    #[arg(short, long, default_value = "0")]
+    count: i16,
+    #[arg(short, long, default_value = "1")]
+    interval: u64,
 }
 
 const ICMP_ECHO_REQUEST: i8 = 8;
@@ -103,22 +105,19 @@ fn resolve_host(host: &str) -> std::io::Result<IpAddr> {
         .ok_or_else(|| std::io::Error::other("no IPs resolved"))
 }
 
-fn main() {
-    // TODO Cli package Simple
-    // cli package count
-    let args = Args::parse();
-    let ip: Option<IpAddr> = args.host.parse().ok();
+fn get_ips(host: String) -> SocketAddr {
+    let ip: Option<IpAddr> = host.parse().ok();
     let ip: IpAddr = match ip {
         Some(..) => ip.unwrap(),
-        None => resolve_host(&args.host).unwrap(),
+        None => resolve_host(&host).unwrap(),
     };
-
-    let pid: u16 = process::id() as u16;
-    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)).unwrap();
     let address: SocketAddr = SocketAddr::new(ip, 8080);
-    println!("got {address}");
+    return address;
+}
 
-    let data: Vec<u8> = create_packet(pid, 1);
+fn ping(address: SocketAddr, pid: u16, c: i16) {
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)).unwrap();
+    let data: Vec<u8> = create_packet(pid, c);
     let now = Instant::now();
     socket.connect(&address.into()).unwrap();
     socket.send(&data).unwrap();
@@ -134,4 +133,25 @@ fn main() {
         "{len} bytes from 1.1.1.1 icmp_seq=1 time={:?}",
         now.elapsed()
     );
+}
+
+fn main() {
+    // TODO Cli package Simple
+    // cli package count
+    let args = Args::parse();
+
+    let pid: u16 = process::id() as u16;
+    let address = get_ips(args.host.clone());
+    let ping_interval = u64::max(args.interval, 1);
+    println!("PING {} ({}) 16 bytes of data.", args.host, address.ip());
+    if args.count == 0 {
+        loop {
+            ping(address, pid, 1);
+            thread::sleep(Duration::from_secs(ping_interval));
+        }
+    }
+    for c in 0..args.count {
+        ping(address, pid, c);
+        thread::sleep(Duration::from_secs(ping_interval));
+    }
 }
