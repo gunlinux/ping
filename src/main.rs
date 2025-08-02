@@ -38,6 +38,13 @@ struct MyPacket {
     _seq: i16,     // h
 } // 8
 
+#[derive(Debug)]
+struct PingResult {
+    transmitted: u16,
+    received: u16,
+    ping_delay: u128,
+}
+
 #[derive(Encode, Decode, Debug)]
 struct DataPacket {
     data: f64,
@@ -126,26 +133,46 @@ fn get_ips(host: String) -> SocketAddr {
     return address;
 }
 
-fn ping(address: SocketAddr, pid: u16, c: i16, pc: u16) {
+fn ping(address: SocketAddr, pid: u16, c: i16, pc: u16) -> Option<PingResult> {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)).unwrap();
     let data: Vec<u8> = create_packet(pid, c, pc);
     let now = Instant::now();
-    socket.connect(&address.into()).unwrap();
-    socket.send(&data).unwrap();
+    let mut ping_result = PingResult {
+        transmitted: 0,
+        received: 0,
+        ping_delay: 0,
+    };
+    let Ok(_) = socket.connect(&address.into()) else { return Some(ping_result) };
+    match socket.send(&data) {
+        Ok(_) => { ping_result.transmitted = 1 },
+        Err(_) => { return Some(ping_result); }
+    };
+
     let mut buffer = [0u8; u16::MAX as usize];
     let len = {
         let buf: &mut [MaybeUninit<u8>; u16::MAX as usize] = unsafe { transmute(&mut buffer) };
         socket.recv(buf)
+    }.unwrap_or_default();
+    if len < 1 {
+        ping_result.ping_delay = now.elapsed().as_millis();
+        return Some(ping_result)
     }
-    .unwrap();
 
-    assert_eq!(&buffer[8..len], &data[8..len], "data failed");
+    for i in 8..len {
+        if buffer[i] != data[i] {
+            ping_result.ping_delay = now.elapsed().as_millis();
+            return Some(ping_result)
+        }
+    }
+    ping_result.ping_delay = now.elapsed().as_millis();
+    ping_result.received = 1;
     println!(
         "{} bytes from 1.1.1.1 icmp_seq={} time={:?} ms",
         len - 8,
         c,
-        now.elapsed().as_millis(),
+        ping_result.ping_delay,
     );
+    Some(ping_result)
 }
 
 fn main() {
@@ -156,22 +183,74 @@ fn main() {
     let pid: u16 = process::id() as u16;
     let address = get_ips(args.host.clone());
     let ping_interval = u64::max(args.interval, 1);
+
+    let app_now = Instant::now();
     println!(
         "PING {} ({}) {} bytes of data.",
         args.host,
         address.ip(),
         16 * args.pc as u64
     );
+    let mut ping_results: Vec<PingResult> = vec![];
     if args.count == 0 {
         let mut c = 1;
         loop {
-            ping(address, pid, c, args.pc);
+            let now = Instant::now();
+            let ping_result = ping(address, pid, c, args.pc);
+            let ping_result: PingResult = match ping_result {
+                Some(_) => ping_result.unwrap(),
+                None => PingResult {
+                    transmitted: 0,
+                    received: 0,
+                    ping_delay: now.elapsed().as_millis(),
+                },
+            };
+            ping_results.push(ping_result);
             thread::sleep(Duration::from_secs(ping_interval));
             c += 1;
         }
     }
     for c in 0..args.count {
-        ping(address, pid, c, args.pc);
+        let now = Instant::now();
+        let ping_result = ping(address, pid, c, args.pc);
+        let ping_result: PingResult = match ping_result {
+            Some(_) => ping_result.unwrap(),
+            None => PingResult {
+                transmitted: 0,
+                received: 0,
+                ping_delay: now.elapsed().as_millis(),
+            },
+        };
+        ping_results.push(ping_result);
         thread::sleep(Duration::from_secs(ping_interval));
     }
+    let mut final_result = PingResult{
+        transmitted: 0,
+        received: 0,
+        ping_delay: 0,
+    };
+    let pcount = ping_results.len() as u64;
+
+    let mut min: u128 = ping_results[0].ping_delay;
+    for i in &ping_results {
+        final_result.transmitted += i.transmitted;
+        final_result.received += i.received;
+        final_result.ping_delay += i.ping_delay;
+        if i.ping_delay < min {
+            min = i.ping_delay;
+        }
+    }
+    let avg = final_result.ping_delay as f64/ (ping_results.len() as f64);
+    let success_percent: f64 = (final_result.received as f64 / ping_results.len() as f64 ) * 100.0;
+    let loss = pcount - final_result.received as u64;
+    let loss = if loss == 0 { 0.0 } else { (pcount as f64 /loss as f64) * 100.0};
+    let spend = app_now.elapsed().as_millis();
+    println!("--- {} ping statistics ---", args.host);
+    println!("{} packets transmitted {} received, {}% packets loss, time {}sm",
+        final_result.transmitted,
+        final_result.received,
+        loss,
+        spend);
+    println!("avg: {avg} / min: {min} / success % {success_percent}");
+
 }
