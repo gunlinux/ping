@@ -1,12 +1,18 @@
 use bincode::{Decode, Encode, config};
 use clap::Parser;
+use clap_num::number_range;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::mem::{MaybeUninit, transmute};
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 use std::{process, thread};
 
+fn package_count(s: &str) -> Result<u16, String> {
+    number_range(s, 1, 4096)
+}
+
 /// Simple program to greet a person
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -16,6 +22,8 @@ struct Args {
     count: i16,
     #[arg(short, long, default_value = "1")]
     interval: u64,
+    #[arg(short, long, default_value = "8", value_parser=package_count)]
+    pc: u16,
 }
 
 const ICMP_ECHO_REQUEST: i8 = 8;
@@ -59,11 +67,10 @@ fn checksum(source: &[u8]) -> u16 {
 
     sum = (sum >> 16) + (sum & 0xffff);
     sum += sum >> 16;
-
-    u16::try_from(sum).unwrap()
+    sum as u16
 }
 
-fn create_packet(id: u16, seq: i16) -> Vec<u8> {
+fn create_packet(id: u16, seq: i16, pc: u16) -> Vec<u8> {
     let mut header = MyPacket {
         _type: ICMP_ECHO_REQUEST,
         code: ICMP_CODE,
@@ -82,7 +89,9 @@ fn create_packet(id: u16, seq: i16) -> Vec<u8> {
 
     let mut combined_buf = Vec::with_capacity(header_buf.len() + data_buf.len());
     combined_buf.extend_from_slice(&header_buf);
-    combined_buf.extend_from_slice(&data_buf);
+    for _ in 0..pc {
+        combined_buf.extend_from_slice(&data_buf);
+    }
 
     let chksum = checksum(&combined_buf);
     header.checksum = chksum.to_be();
@@ -90,7 +99,9 @@ fn create_packet(id: u16, seq: i16) -> Vec<u8> {
     let header_buf: Vec<u8> = bincode::encode_to_vec(&header, cfg).unwrap();
     let mut new_combined_buf = Vec::with_capacity(header_buf.len() + data_buf.len());
     new_combined_buf.extend_from_slice(&header_buf);
-    new_combined_buf.extend_from_slice(&data_buf);
+    for _ in 0..pc {
+        new_combined_buf.extend_from_slice(&data_buf);
+    }
     new_combined_buf
 }
 
@@ -115,23 +126,25 @@ fn get_ips(host: String) -> SocketAddr {
     return address;
 }
 
-fn ping(address: SocketAddr, pid: u16, c: i16) {
+fn ping(address: SocketAddr, pid: u16, c: i16, pc: u16) {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)).unwrap();
-    let data: Vec<u8> = create_packet(pid, c);
+    let data: Vec<u8> = create_packet(pid, c, pc);
     let now = Instant::now();
     socket.connect(&address.into()).unwrap();
     socket.send(&data).unwrap();
-    let mut buffer = [0u8; 512];
+    let mut buffer = [0u8; u16::MAX as usize];
     let len = {
-        let buf: &mut [MaybeUninit<u8>; 512] = unsafe { transmute(&mut buffer) };
+        let buf: &mut [MaybeUninit<u8>; u16::MAX as usize] = unsafe { transmute(&mut buffer) };
         socket.recv(buf)
     }
     .unwrap();
 
     assert_eq!(&buffer[8..len], &data[8..len], "data failed");
     println!(
-        "{len} bytes from 1.1.1.1 icmp_seq=1 time={:?}",
-        now.elapsed()
+        "{} bytes from 1.1.1.1 icmp_seq={} time={:?} ms",
+        len - 8,
+        c,
+        now.elapsed().as_millis(),
     );
 }
 
@@ -143,15 +156,22 @@ fn main() {
     let pid: u16 = process::id() as u16;
     let address = get_ips(args.host.clone());
     let ping_interval = u64::max(args.interval, 1);
-    println!("PING {} ({}) 16 bytes of data.", args.host, address.ip());
+    println!(
+        "PING {} ({}) {} bytes of data.",
+        args.host,
+        address.ip(),
+        16 * args.pc as u64
+    );
     if args.count == 0 {
+        let mut c = 1;
         loop {
-            ping(address, pid, 1);
+            ping(address, pid, c, args.pc);
             thread::sleep(Duration::from_secs(ping_interval));
+            c += 1;
         }
     }
     for c in 0..args.count {
-        ping(address, pid, c);
+        ping(address, pid, c, args.pc);
         thread::sleep(Duration::from_secs(ping_interval));
     }
 }
