@@ -142,26 +142,31 @@ fn ping(address: SocketAddr, pid: u16, c: i16, pc: u16) -> Option<PingResult> {
         received: 0,
         ping_delay: 0,
     };
-    let Ok(_) = socket.connect(&address.into()) else { return Some(ping_result) };
+    let Ok(_) = socket.connect(&address.into()) else {
+        return Some(ping_result);
+    };
     match socket.send(&data) {
-        Ok(_) => { ping_result.transmitted = 1 },
-        Err(_) => { return Some(ping_result); }
+        Ok(_) => ping_result.transmitted = 1,
+        Err(_) => {
+            return Some(ping_result);
+        }
     };
 
     let mut buffer = [0u8; u16::MAX as usize];
     let len = {
         let buf: &mut [MaybeUninit<u8>; u16::MAX as usize] = unsafe { transmute(&mut buffer) };
         socket.recv(buf)
-    }.unwrap_or_default();
+    }
+    .unwrap_or_default();
     if len < 1 {
         ping_result.ping_delay = now.elapsed().as_millis();
-        return Some(ping_result)
+        return Some(ping_result);
     }
 
     for i in 8..len {
         if buffer[i] != data[i] {
             ping_result.ping_delay = now.elapsed().as_millis();
-            return Some(ping_result)
+            return Some(ping_result);
         }
     }
     ping_result.ping_delay = now.elapsed().as_millis();
@@ -175,6 +180,40 @@ fn ping(address: SocketAddr, pid: u16, c: i16, pc: u16) -> Option<PingResult> {
     Some(ping_result)
 }
 
+fn print_stat(ping_results: Vec<PingResult>, app_now: Instant, host: &str) {
+    let mut final_result = PingResult {
+        transmitted: 0,
+        received: 0,
+        ping_delay: 0,
+    };
+    let pcount = ping_results.len() as u64;
+
+    let mut min: u128 = ping_results[0].ping_delay;
+    for i in &ping_results {
+        final_result.transmitted += i.transmitted;
+        final_result.received += i.received;
+        final_result.ping_delay += i.ping_delay;
+        if i.ping_delay < min {
+            min = i.ping_delay;
+        }
+    }
+    let avg = final_result.ping_delay as f64 / (ping_results.len() as f64);
+    let success_percent: f64 = (final_result.received as f64 / ping_results.len() as f64) * 100.0;
+    let loss = pcount - final_result.received as u64;
+    let loss = if loss == 0 {
+        0.0
+    } else {
+        (pcount as f64 / loss as f64) * 100.0
+    };
+    let spend = app_now.elapsed().as_millis();
+    println!("--- {} ping statistics ---", host);
+    println!(
+        "{} packets transmitted {} received, {}% packets loss, time {}sm",
+        final_result.transmitted, final_result.received, loss, spend
+    );
+    println!("avg: {avg} / min: {min} / success % {success_percent}");
+}
+
 fn main() {
     // TODO Cli package Simple
     // cli package count
@@ -183,7 +222,6 @@ fn main() {
     let pid: u16 = process::id() as u16;
     let address = get_ips(args.host.clone());
     let ping_interval = u64::max(args.interval, 1);
-
     let app_now = Instant::now();
     println!(
         "PING {} ({}) {} bytes of data.",
@@ -224,33 +262,5 @@ fn main() {
         ping_results.push(ping_result);
         thread::sleep(Duration::from_secs(ping_interval));
     }
-    let mut final_result = PingResult{
-        transmitted: 0,
-        received: 0,
-        ping_delay: 0,
-    };
-    let pcount = ping_results.len() as u64;
-
-    let mut min: u128 = ping_results[0].ping_delay;
-    for i in &ping_results {
-        final_result.transmitted += i.transmitted;
-        final_result.received += i.received;
-        final_result.ping_delay += i.ping_delay;
-        if i.ping_delay < min {
-            min = i.ping_delay;
-        }
-    }
-    let avg = final_result.ping_delay as f64/ (ping_results.len() as f64);
-    let success_percent: f64 = (final_result.received as f64 / ping_results.len() as f64 ) * 100.0;
-    let loss = pcount - final_result.received as u64;
-    let loss = if loss == 0 { 0.0 } else { (pcount as f64 /loss as f64) * 100.0};
-    let spend = app_now.elapsed().as_millis();
-    println!("--- {} ping statistics ---", args.host);
-    println!("{} packets transmitted {} received, {}% packets loss, time {}sm",
-        final_result.transmitted,
-        final_result.received,
-        loss,
-        spend);
-    println!("avg: {avg} / min: {min} / success % {success_percent}");
-
+    print_stat(ping_results, app_now, &args.host);
 }
