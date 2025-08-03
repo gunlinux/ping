@@ -1,4 +1,4 @@
-use bincode::{Decode, Encode, config};
+use bincode::{config, Decode, Encode};
 use clap::Parser;
 use clap_num::number_range;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -29,7 +29,7 @@ struct Args {
     #[arg(short, long, default_value = "8", value_parser=package_count)]
     pc: u16,
 }
-
+const ICMP_HEADER_SIZE: usize = 8;
 const ICMP_ECHO_REQUEST: i8 = 8;
 const ICMP_CODE: i8 = 0;
 
@@ -167,17 +167,16 @@ fn ping(address: SocketAddr, pid: u16, c: i16, pc: u16) -> Option<PingResult> {
         return Some(ping_result);
     }
 
-    for i in 8..len {
-        if buffer[i] != data[i] {
-            ping_result.ping_delay = now.elapsed().as_millis();
-            return Some(ping_result);
-        }
+    if buffer[ICMP_HEADER_SIZE..len] != data[ICMP_HEADER_SIZE..len] {
+        ping_result.ping_delay = now.elapsed().as_millis();
+        return Some(ping_result);
     }
     ping_result.ping_delay = now.elapsed().as_millis();
     ping_result.received = 1;
     println!(
-        "{} bytes from 1.1.1.1 icmp_seq={} time={:?} ms",
-        len - 8,
+        "{} bytes from {} icmp_seq={} time={:?} ms",
+        len - ICMP_HEADER_SIZE,
+        address.ip(),
         c,
         ping_result.ping_delay,
     );
@@ -191,7 +190,7 @@ fn print_stat(ping_results: Vec<PingResult>, app_now: Instant, host: &str) {
         ping_delay: 0,
     };
     let pcount = ping_results.len() as u64;
-    if ping_results.len() == 0 {
+    if ping_results.is_empty() {
         println!("zero info");
         return
     }
@@ -206,12 +205,7 @@ fn print_stat(ping_results: Vec<PingResult>, app_now: Instant, host: &str) {
     }
     let avg = final_result.ping_delay as f64 / (ping_results.len() as f64);
     let success_percent: f64 = (final_result.received as f64 / ping_results.len() as f64) * 100.0;
-    let loss = pcount - final_result.received as u64;
-    let loss = if loss == 0 {
-        0.0
-    } else {
-        (pcount as f64 / loss as f64) * 100.0
-    };
+    let loss = ((pcount - final_result.received as u64) as f64 / pcount as f64) * 100.0;
     let spend = app_now.elapsed().as_millis();
     println!("--- {} ping statistics ---", host);
     println!(
