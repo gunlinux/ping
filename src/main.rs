@@ -1,6 +1,7 @@
 use bincode::{Decode, Encode, config};
 use clap::Parser;
 use clap_num::number_range;
+use ping::{PingResult, PingStats};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::mem::{MaybeUninit, transmute};
 use std::net::{IpAddr, SocketAddr};
@@ -39,13 +40,6 @@ struct MyPacket {
     id: u16,       // H
     seq: i16,      // h
 } // 8
-
-#[derive(Debug, Clone)]
-struct PingResult {
-    transmitted: u16,
-    received: u16,
-    ping_delay: u128,
-}
 
 #[derive(Encode, Decode, Debug)]
 struct DataPacket {
@@ -183,40 +177,6 @@ fn ping(address: SocketAddr, pid: u16, c: i16, pc: u16) -> PingResult {
     ping_result
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn print_stat(ping_results: &[PingResult], app_now: Instant, host: &str) {
-    let mut final_result = PingResult {
-        transmitted: 0,
-        received: 0,
-        ping_delay: 0,
-    };
-    let pcount = ping_results.len() as u32;
-    if ping_results.is_empty() {
-        println!("zero info");
-        return;
-    }
-    let mut min: u128 = ping_results[0].ping_delay;
-    for i in ping_results {
-        final_result.transmitted += i.transmitted;
-        final_result.received += i.received;
-        final_result.ping_delay += i.ping_delay;
-        if i.ping_delay < min {
-            min = i.ping_delay;
-        }
-    }
-    let avg = final_result.ping_delay as f64 / (ping_results.len() as f64);
-    let success_percent: f64 =
-        (f64::from(final_result.received) / ping_results.len() as f64) * 100.0;
-    let loss = (f64::from(pcount - u32::from(final_result.received)) / f64::from(pcount)) * 100.0;
-    let spend = app_now.elapsed().as_millis();
-    println!("--- {host} ping statistics ---");
-    println!(
-        "{} packets transmitted {} received, {}% packets loss, time {}sm",
-        final_result.transmitted, final_result.received, loss, spend
-    );
-    println!("avg: {avg} / min: {min} / success % {success_percent}");
-}
-
 #[allow(clippy::cast_possible_truncation)]
 fn main() {
     let args = Args::parse();
@@ -224,39 +184,34 @@ fn main() {
     let pid: u16 = process::id() as u16;
     let address = get_ips(&args.host.clone());
     let ping_interval = u64::max(args.interval, 1);
-    let app_now = Instant::now();
     println!(
         "PING {} ({}) {} bytes of data.",
         args.host,
         address.ip(),
         16 * u64::from(args.pc)
     );
-    let ping_results = Arc::new(Mutex::new(Vec::new()));
     let mut c = 1;
 
     let host = args.host.clone();
     let running = Arc::new(AtomicBool::new(true));
+    let ping_stats = Arc::new(Mutex::new(PingStats::new()));
     // Setup Ctrl+C handler
     {
         let running = Arc::clone(&running);
-        let ping_results = Arc::clone(&ping_results);
+        let ping_stats = Arc::clone(&ping_stats);
         ctrlc::set_handler(move || {
             println!("\nreceived Ctrl+C!");
             running.store(false, Ordering::SeqCst);
-            print_stat(&ping_results.lock().unwrap().to_vec(), app_now, &host);
+            ping_stats.lock().unwrap().print_stat(&args.host.clone());
             process::exit(0);
         })
         .expect("Error setting Ctrl-C handler");
     }
     while args.count == 0 || c <= args.count {
         let ping_result = ping(address, pid, c, args.pc);
-        ping_results.lock().expect("dame").push(ping_result);
+        ping_stats.lock().expect("damn").push(ping_result);
         thread::sleep(Duration::from_secs(ping_interval));
         c += 1;
     }
-    print_stat(
-        &ping_results.lock().unwrap().to_vec(),
-        app_now,
-        &args.host.clone(),
-    );
+    ping_stats.lock().unwrap().print_stat(&host);
 }
