@@ -138,7 +138,7 @@ fn ping(address: SocketAddr, pid: u16, c: i16, pc: u16) -> PingResult {
     let mut ping_result = PingResult {
         transmitted: 0,
         received: 0,
-        ping_delay: 0,
+        ping_delay: None,
     };
     let Ok(()) = socket.connect(&address.into()) else {
         return ping_result;
@@ -157,23 +157,25 @@ fn ping(address: SocketAddr, pid: u16, c: i16, pc: u16) -> PingResult {
     }
     .unwrap_or_default();
     if len < 1 {
-        ping_result.ping_delay = now.elapsed().as_millis();
+        ping_result.ping_delay = Some(now.elapsed());
         return ping_result;
     }
 
     if buffer[ICMP_HEADER_SIZE..len] != data[ICMP_HEADER_SIZE..len] {
-        ping_result.ping_delay = now.elapsed().as_millis();
+        ping_result.ping_delay = Some(now.elapsed());
         return ping_result;
     }
-    ping_result.ping_delay = now.elapsed().as_millis();
+    ping_result.ping_delay = Some(now.elapsed());
     ping_result.received = 1;
-    println!(
-        "{} bytes from {} icmp_seq={} time={:?} ms",
-        len - ICMP_HEADER_SIZE,
-        address.ip(),
-        c,
-        ping_result.ping_delay,
-    );
+    if let Some(delay) = ping_result.ping_delay {
+        println!(
+            "{} bytes from {} icmp_seq={} time={:.3} ms",
+            len - ICMP_HEADER_SIZE,
+            address.ip(),
+            c,
+            delay.as_secs_f64() * 1000.0,
+        );
+    }
     ping_result
 }
 
@@ -209,7 +211,7 @@ fn main() {
     }
     while args.count == 0 || c <= args.count {
         let ping_result = ping(address, pid, c, args.pc);
-        ping_stats.lock().expect("damn").push(ping_result);
+        ping_stats.lock().expect("damn").push(&ping_result);
         thread::sleep(Duration::from_secs(ping_interval));
         c += 1;
     }
