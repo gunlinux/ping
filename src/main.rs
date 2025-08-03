@@ -78,7 +78,7 @@ fn checksum(source: &[u8]) -> u16 {
 
     sum = (sum >> 16) + (sum & 0xffff);
     sum += sum >> 16;
-    sum as u16
+    !sum as u16
 }
 
 fn create_packet(id: u16, seq: i16, pc: u16) -> Vec<u8> {
