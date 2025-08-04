@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::fmt;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -12,6 +13,7 @@ pub struct PingStats {
     ping_min: Option<Duration>,
     start: Instant,
     duration: Option<Duration>,
+    host: String,
 }
 
 #[derive(Debug, Clone)]
@@ -21,16 +23,10 @@ pub struct PingResult {
     pub ping_delay: Option<Duration>,
 }
 
-impl Default for PingStats {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[allow(clippy::cast_lossless, clippy::cast_precision_loss)]
 impl PingStats {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(host: &str) -> Self {
         PingStats {
             count: 0,
             transmitted: 0,
@@ -40,6 +36,7 @@ impl PingStats {
             ping_min: None,
             start: Instant::now(),
             duration: None,
+            host: host.to_string(),
         }
     }
     pub fn push(&mut self, ping_result: &PingResult) {
@@ -66,27 +63,6 @@ impl PingStats {
     pub fn finish(&mut self) {
         self.duration = Some(self.start.elapsed());
     }
-    pub fn print_stat(&self, host: &str) {
-        let finish_time = match self.duration {
-            Some(a) => a.as_millis(),
-            None => 0,
-        };
-        println!("--- {host} ping statistics ---");
-        println!(
-            "{} packets transmitted {} received, {}% packets loss, time {}sm",
-            self.transmitted,
-            self.received,
-            (self.loss / self.count) * 100,
-            finish_time,
-        );
-        println!(
-            "avg: {:.3}ms / min: {:.3}/ success: {}%",
-            self.avg(),
-            self.get_ping_min(),
-            self.success()
-        );
-    }
-
     fn avg(&self) -> f64 {
         match self.ping_delay {
             Some(a) => a.as_millis() as f64 / self.count as f64,
@@ -102,5 +78,26 @@ impl PingStats {
             Some(a) => a.as_millis() as f64,
             None => 0.0,
         }
+    }
+}
+
+impl fmt::Display for PingStats {
+
+    #[allow(clippy::cast_lossless, clippy::cast_precision_loss)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "--- {} ping statistics ---\n\
+            {} packets transmitted, {} received, {}% packet loss, time {:.2}s\n\
+            avg: {:.3}ms / min: {:.3}ms / success: {:.2}%",
+            self.host,
+            self.transmitted,
+            self.received,
+            (self.loss as f64 / self.count as f64) * 100.0,
+            self.duration.unwrap_or(Duration::new(0, 0)).as_secs_f64(),
+            self.avg(),
+            self.get_ping_min(),
+            self.success()
+        )
     }
 }

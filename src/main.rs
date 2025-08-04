@@ -204,7 +204,7 @@ fn main() {
 
     let host = args.host.clone();
     let running = Arc::new(AtomicBool::new(true));
-    let ping_stats = Arc::new(Mutex::new(PingStats::new()));
+    let ping_stats = Arc::new(Mutex::new(PingStats::new(&host)));
     // Setup Ctrl+C handler
     {
         let running = Arc::clone(&running);
@@ -213,7 +213,7 @@ fn main() {
             println!("\nreceived Ctrl+C!");
             running.store(false, Ordering::SeqCst);
             ping_stats.lock().unwrap().finish();
-            ping_stats.lock().unwrap().print_stat(&args.host.clone());
+            println!("{}", ping_stats.lock().unwrap());
             process::exit(0);
         })
         .expect("Error setting Ctrl-C handler");
@@ -225,5 +225,5 @@ fn main() {
         c += 1;
     }
     ping_stats.lock().unwrap().finish();
-    ping_stats.lock().unwrap().print_stat(&host);
+    println!("{}", ping_stats.lock().unwrap());
 }
