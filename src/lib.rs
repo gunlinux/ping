@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
+pub mod consts;
 use std::fmt;
+use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -18,9 +20,45 @@ pub struct PingStats {
 
 #[derive(Debug, Clone)]
 pub struct PingResult {
-    pub transmitted: u16,
-    pub received: u16,
-    pub ping_delay: Option<Duration>,
+    transmitted_packets: u16,
+    received: u16,
+    ping_delay: Option<Duration>,
+    start: Instant,
+    seq: i16,
+}
+
+#[allow(clippy::cast_lossless, clippy::cast_precision_loss)]
+impl PingResult {
+    #[must_use]
+    pub fn new(seq: i16) -> Self {
+        PingResult {
+            transmitted_packets: 0,
+            received: 0,
+            ping_delay: None,
+            start: Instant::now(),
+            seq,
+        }
+    }
+    pub fn transmitted(&mut self) {
+        self.transmitted_packets = 1;
+    }
+    pub fn finish(&mut self, received: Option<u16>) {
+        if let Some(rec) = received {
+            self.received = rec;
+        }
+        self.ping_delay = Some(self.start.elapsed());
+    }
+    pub fn print(self, len: usize, address: &IpAddr) {
+        if let Some(delay) = self.ping_delay {
+            println!(
+                "{} bytes from {} icmp_seq={} time={:.3} ms",
+                len - consts::ICMP_HEADER_SIZE,
+                address,
+                self.seq,
+                delay.as_secs_f64() * 1000.0,
+            );
+        }
+    }
 }
 
 #[allow(clippy::cast_lossless, clippy::cast_precision_loss)]
@@ -41,7 +79,7 @@ impl PingStats {
     }
     pub fn push(&mut self, ping_result: &PingResult) {
         self.count += 1;
-        self.transmitted += ping_result.transmitted;
+        self.transmitted += ping_result.transmitted_packets;
         self.received += ping_result.received;
 
         self.ping_delay = match (self.ping_delay, ping_result.ping_delay) {
@@ -82,7 +120,6 @@ impl PingStats {
 }
 
 impl fmt::Display for PingStats {
-
     #[allow(clippy::cast_lossless, clippy::cast_precision_loss)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
