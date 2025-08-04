@@ -1,6 +1,7 @@
 use bincode::{Decode, Encode, config};
 use clap::Parser;
 use clap_num::number_range;
+use ping::consts::{ICMP_CODE, ICMP_ECHO_REQUEST, ICMP_HEADER_SIZE, MAX_DATA_SIZE};
 use ping::{PingResult, PingStats};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::mem::{MaybeUninit, transmute};
@@ -10,7 +11,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{process, thread};
 
 fn package_count(s: &str) -> Result<u16, String> {
@@ -30,10 +31,6 @@ struct Args {
     #[arg(short, long, default_value = "false")]
     fast: bool,
 }
-const ICMP_HEADER_SIZE: usize = 8;
-const ICMP_ECHO_REQUEST: i8 = 8;
-const ICMP_CODE: i8 = 0;
-const MAX_DATA_SIZE: usize = 1600;
 
 #[derive(Encode, Decode, Debug)]
 struct MyPacket {
@@ -133,21 +130,26 @@ fn get_ips(host: &str) -> SocketAddr {
     address
 }
 
+fn validate_data(source: &[u8]) -> bool {
+    let from_checksum = &source[2..4];
+    let from_checksum = u16::from_le_bytes(from_checksum.try_into().unwrap());
+    let mut new_buf = Vec::with_capacity(source.len());
+    new_buf.extend_from_slice(source);
+    new_buf[2] = 0;
+    new_buf[3] = 0;
+    from_checksum == checksum(&new_buf)
+}
+
 #[allow(clippy::transmute_ptr_to_ptr)]
-fn ping(address: SocketAddr, pid: u16, c: i16, pc: u16) -> PingResult {
+fn ping(address: SocketAddr, pid: u16, seq: i16, pc: u16) -> PingResult {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)).unwrap();
-    let data: Vec<u8> = create_packet(pid, c, pc);
-    let now = Instant::now();
-    let mut ping_result = PingResult {
-        transmitted: 0,
-        received: 0,
-        ping_delay: None,
-    };
+    let data: Vec<u8> = create_packet(pid, seq, pc);
+    let mut ping_result = PingResult::new(seq);
     let Ok(()) = socket.connect(&address.into()) else {
         return ping_result;
     };
     match socket.send(&data) {
-        Ok(_) => ping_result.transmitted = 1,
+        Ok(_) => ping_result.transmitted(),
         Err(_) => {
             return ping_result;
         }
@@ -160,25 +162,20 @@ fn ping(address: SocketAddr, pid: u16, c: i16, pc: u16) -> PingResult {
     }
     .unwrap_or_default();
     if len < 1 {
-        ping_result.ping_delay = Some(now.elapsed());
+        ping_result.finish(Some(0));
         return ping_result;
     }
 
     if buffer[ICMP_HEADER_SIZE..len] != data[ICMP_HEADER_SIZE..len] {
-        ping_result.ping_delay = Some(now.elapsed());
+        ping_result.finish(Some(0));
         return ping_result;
     }
-    ping_result.ping_delay = Some(now.elapsed());
-    ping_result.received = 1;
-    if let Some(delay) = ping_result.ping_delay {
-        println!(
-            "{} bytes from {} icmp_seq={} time={:.3} ms",
-            len - ICMP_HEADER_SIZE,
-            address.ip(),
-            c,
-            delay.as_secs_f64() * 1000.0,
-        );
+    if validate_data(&buffer[0..len]) {
+        ping_result.finish(Some(1));
+    }  else {
+        ping_result.finish(Some(0));
     }
+    ping_result.clone().print(len, &address.ip());
     ping_result
 }
 
@@ -193,7 +190,11 @@ fn main() {
     } else {
         get_ips(&args.host.clone())
     };
-    let ping_interval = if args.fast { 0 } else { u64::max(args.interval, 1) };
+    let ping_interval = if args.fast {
+        0
+    } else {
+        u64::max(args.interval, 1)
+    };
     println!(
         "PING {} ({}) {} bytes of data.",
         args.host,
@@ -204,7 +205,7 @@ fn main() {
 
     let host = args.host.clone();
     let running = Arc::new(AtomicBool::new(true));
-    let ping_stats = Arc::new(Mutex::new(PingStats::new()));
+    let ping_stats = Arc::new(Mutex::new(PingStats::new(&host)));
     // Setup Ctrl+C handler
     {
         let running = Arc::clone(&running);
@@ -212,7 +213,8 @@ fn main() {
         ctrlc::set_handler(move || {
             println!("\nreceived Ctrl+C!");
             running.store(false, Ordering::SeqCst);
-            ping_stats.lock().unwrap().print_stat(&args.host.clone());
+            ping_stats.lock().unwrap().finish();
+            println!("{}", ping_stats.lock().unwrap());
             process::exit(0);
         })
         .expect("Error setting Ctrl-C handler");
@@ -221,7 +223,13 @@ fn main() {
         let ping_result = ping(address, pid, c, args.pc);
         ping_stats.lock().expect("damn").push(&ping_result);
         thread::sleep(Duration::from_secs(ping_interval));
-        c += 1;
+        if let Some(new_c) = c.checked_add(1) {
+            c = new_c;
+        } else {
+            println!("max ping limit accepted");
+            return;
+        }
     }
-    ping_stats.lock().unwrap().print_stat(&host);
+    ping_stats.lock().unwrap().finish();
+    println!("{}", ping_stats.lock().unwrap());
 }

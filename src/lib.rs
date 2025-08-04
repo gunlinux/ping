@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+pub mod consts;
+use std::fmt;
+use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -11,25 +14,57 @@ pub struct PingStats {
     loss: u16,
     ping_min: Option<Duration>,
     start: Instant,
+    duration: Option<Duration>,
+    host: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct PingResult {
-    pub transmitted: u16,
-    pub received: u16,
-    pub ping_delay: Option<Duration>,
+    transmitted_packets: u16,
+    received: u16,
+    ping_delay: Option<Duration>,
+    start: Instant,
+    seq: i16,
 }
 
-impl Default for PingStats {
-    fn default() -> Self {
-        Self::new()
+#[allow(clippy::cast_lossless, clippy::cast_precision_loss)]
+impl PingResult {
+    #[must_use]
+    pub fn new(seq: i16) -> Self {
+        PingResult {
+            transmitted_packets: 0,
+            received: 0,
+            ping_delay: None,
+            start: Instant::now(),
+            seq,
+        }
+    }
+    pub fn transmitted(&mut self) {
+        self.transmitted_packets = 1;
+    }
+    pub fn finish(&mut self, received: Option<u16>) {
+        if let Some(rec) = received {
+            self.received = rec;
+        }
+        self.ping_delay = Some(self.start.elapsed());
+    }
+    pub fn print(self, len: usize, address: &IpAddr) {
+        if let Some(delay) = self.ping_delay {
+            println!(
+                "{} bytes from {} icmp_seq={} time={:.3} ms",
+                len - consts::ICMP_HEADER_SIZE,
+                address,
+                self.seq,
+                delay.as_secs_f64() * 1000.0,
+            );
+        }
     }
 }
 
 #[allow(clippy::cast_lossless, clippy::cast_precision_loss)]
 impl PingStats {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(host: &str) -> Self {
         PingStats {
             count: 0,
             transmitted: 0,
@@ -38,11 +73,13 @@ impl PingStats {
             loss: 0,
             ping_min: None,
             start: Instant::now(),
+            duration: None,
+            host: host.to_string(),
         }
     }
     pub fn push(&mut self, ping_result: &PingResult) {
         self.count += 1;
-        self.transmitted += ping_result.transmitted;
+        self.transmitted += ping_result.transmitted_packets;
         self.received += ping_result.received;
 
         self.ping_delay = match (self.ping_delay, ping_result.ping_delay) {
@@ -61,23 +98,9 @@ impl PingStats {
             self.loss += 1;
         }
     }
-    pub fn print_stat(&self, host: &str) {
-        println!("--- {host} ping statistics ---");
-        println!(
-            "{} packets transmitted {} received, {}% packets loss, time {}sm",
-            self.transmitted,
-            self.received,
-            (self.loss / self.count) * 100,
-            self.start.elapsed().as_millis()
-        );
-        println!(
-            "avg: {:.3}ms / min: {:.3}/ success: {}%",
-            self.avg(),
-            self.get_ping_min(),
-            self.success()
-        );
+    pub fn finish(&mut self) {
+        self.duration = Some(self.start.elapsed());
     }
-
     fn avg(&self) -> f64 {
         match self.ping_delay {
             Some(a) => a.as_millis() as f64 / self.count as f64,
@@ -93,5 +116,25 @@ impl PingStats {
             Some(a) => a.as_millis() as f64,
             None => 0.0,
         }
+    }
+}
+
+impl fmt::Display for PingStats {
+    #[allow(clippy::cast_lossless, clippy::cast_precision_loss)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "--- {} ping statistics ---\n\
+            {} packets transmitted, {} received, {}% packet loss, time {:.2}s\n\
+            avg: {:.3}ms / min: {:.3}ms / success: {:.2}%",
+            self.host,
+            self.transmitted,
+            self.received,
+            (self.loss as f64 / self.count as f64) * 100.0,
+            self.duration.unwrap_or(Duration::new(0, 0)).as_secs_f64(),
+            self.avg(),
+            self.get_ping_min(),
+            self.success()
+        )
     }
 }
