@@ -11,7 +11,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::{Duration};
+use std::time::Duration;
 use std::{process, thread};
 
 fn package_count(s: &str) -> Result<u16, String> {
@@ -130,6 +130,16 @@ fn get_ips(host: &str) -> SocketAddr {
     address
 }
 
+fn validate_data(source: &[u8]) -> bool {
+    let from_checksum = &source[2..4];
+    let from_checksum = u16::from_le_bytes(from_checksum.try_into().unwrap());
+    let mut new_buf = Vec::with_capacity(source.len());
+    new_buf.extend_from_slice(source);
+    new_buf[2] = 0;
+    new_buf[3] = 0;
+    from_checksum == checksum(&new_buf)
+}
+
 #[allow(clippy::transmute_ptr_to_ptr)]
 fn ping(address: SocketAddr, pid: u16, seq: i16, pc: u16) -> PingResult {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)).unwrap();
@@ -160,7 +170,11 @@ fn ping(address: SocketAddr, pid: u16, seq: i16, pc: u16) -> PingResult {
         ping_result.finish(Some(0));
         return ping_result;
     }
-    ping_result.finish(Some(1));
+    if validate_data(&buffer[0..len]) {
+        ping_result.finish(Some(1));
+    }  else {
+        ping_result.finish(Some(0));
+    }
     ping_result.clone().print(len, &address.ip());
     ping_result
 }
@@ -213,9 +227,8 @@ fn main() {
             c = new_c;
         } else {
             println!("max ping limit accepted");
-            return
+            return;
         }
-
     }
     ping_stats.lock().unwrap().finish();
     println!("{}", ping_stats.lock().unwrap());
