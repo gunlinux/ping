@@ -5,6 +5,7 @@ use ping::{PingResult, PingStats};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::mem::{MaybeUninit, transmute};
 use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -26,6 +27,8 @@ struct Args {
     interval: u64,
     #[arg(short, long, default_value = "8", value_parser=package_count)]
     pc: u16,
+    #[arg(short, long, default_value = "false")]
+    fast: bool,
 }
 const ICMP_HEADER_SIZE: usize = 8;
 const ICMP_ECHO_REQUEST: i8 = 8;
@@ -184,8 +187,13 @@ fn main() {
     let args = Args::parse();
 
     let pid: u16 = process::id() as u16;
-    let address = get_ips(&args.host.clone());
-    let ping_interval = u64::max(args.interval, 1);
+    let address = if args.fast {
+        println!("we are blazingly fast now {}", args.fast);
+        SocketAddr::new(IpAddr::from_str("127.0.0.1").unwrap(), 8080)
+    } else {
+        get_ips(&args.host.clone())
+    };
+    let ping_interval = if args.fast { 0 } else { u64::max(args.interval, 1) };
     println!(
         "PING {} ({}) {} bytes of data.",
         args.host,
