@@ -11,6 +11,7 @@ pub struct PingStats {
     loss: u16,
     ping_min: Option<Duration>,
     start: Instant,
+    duration: Option<Duration>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +39,7 @@ impl PingStats {
             loss: 0,
             ping_min: None,
             start: Instant::now(),
+            duration: None,
         }
     }
     pub fn push(&mut self, ping_result: &PingResult) {
@@ -61,14 +63,21 @@ impl PingStats {
             self.loss += 1;
         }
     }
+    pub fn finish(&mut self) {
+        self.duration = Some(self.start.elapsed());
+    }
     pub fn print_stat(&self, host: &str) {
+        let finish_time = match self.duration {
+            Some(a) => a.as_millis(),
+            None => 0,
+        };
         println!("--- {host} ping statistics ---");
         println!(
             "{} packets transmitted {} received, {}% packets loss, time {}sm",
             self.transmitted,
             self.received,
             (self.loss / self.count) * 100,
-            self.start.elapsed().as_millis()
+            finish_time,
         );
         println!(
             "avg: {:.3}ms / min: {:.3}/ success: {}%",

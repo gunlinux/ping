@@ -212,6 +212,7 @@ fn main() {
         ctrlc::set_handler(move || {
             println!("\nreceived Ctrl+C!");
             running.store(false, Ordering::SeqCst);
+            ping_stats.lock().unwrap().finish();
             ping_stats.lock().unwrap().print_stat(&args.host.clone());
             process::exit(0);
         })
@@ -223,5 +224,6 @@ fn main() {
         thread::sleep(Duration::from_secs(ping_interval));
         c += 1;
     }
+    ping_stats.lock().unwrap().finish();
     ping_stats.lock().unwrap().print_stat(&host);
 }
